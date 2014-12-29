@@ -109,24 +109,26 @@ module ufpgapll(
 	end
 	
 	/* "period", of course, is really period / 2. */
-	reg [15:0] period = 16'd1000;
-	reg [15:0] period_min = 16'd10; /* about 10 MHz */
-	reg [15:0] period_max = 16'd1700; /* about 14 kHz */
+	reg [9:0] period = 10'd1000;
+	reg [9:0] period_min = 10'd10; /* about 10 MHz */
+	reg [9:0] period_max = 10'd850; /* about 28 kHz */
 	
 	/*** VCO period control network ***/
 	
-	parameter SLEW_CENTER = 9'h100;
-	parameter SLEW_DIV = 9'hC0;
+	parameter SLEW_CENTER = {1'b1, 11'h0};
+	parameter SLEW_DIV = {1'b0, {11{1'b1}}};
 	
-	reg [8:0] slew_cur = SLEW_CENTER;
+	reg [12:0] slew_cur = SLEW_CENTER;
 	
 	reg slew_slow = 0; /* i.e., become slower */
 	reg slew_fast = 0; /* i.e., become faster */
 
 	wire do_slew_fast = slew_cur <= (SLEW_CENTER - SLEW_DIV);
 	wire do_slew_slow = slew_cur >= (SLEW_CENTER + SLEW_DIV);
+	reg do_slew_fast_1a = 0;
+	reg do_slew_slow_1a = 0;
 
-	wire [15:0] period_next = period + do_slew_slow - do_slew_fast;
+	wire [9:0] period_next = period + do_slew_slow_1a - do_slew_fast_1a;
 //	wire [15:0] period_next = 16'd60; /* around 2.4 microseconds */
 	
 	assign led = {do_slew_slow, do_slew_fast, slew_slow, slew_fast};
@@ -140,38 +142,69 @@ module ufpgapll(
 		else
 			period <= period_next;
 		
-		slew_cur <= slew_cur + slew_slow - slew_fast - (do_slew_slow ? SLEW_DIV : 0) + (do_slew_fast ? SLEW_DIV : 0);
+		slew_cur <= (do_slew_slow_1a | do_slew_fast_1a)
+		            ? SLEW_CENTER
+		            : (slew_cur + slew_slow - slew_fast);
+		do_slew_slow_1a <= do_slew_slow;
+		do_slew_fast_1a <= do_slew_fast;
+	end
+	
+	/*** VCO proportional phase adjust network ***/
+	
+	parameter PROP_CENTER = {1'b1, 5'h0};
+	parameter PROP_DIV    = 6'h2;
+	
+	reg [5:0] prop_cur = PROP_CENTER;
+	
+	wire do_phase_up = prop_cur <= (PROP_CENTER - PROP_DIV);
+	wire do_phase_dn = prop_cur >= (PROP_CENTER + PROP_DIV);
+	
+	always @(posedge clk_50) begin
+		prop_cur <= prop_cur + slew_slow - slew_fast - (do_phase_dn ? PROP_DIV : 0) + (do_phase_up ? PROP_DIV : 0);
 	end
 
-	/*** VCO & phase comparator network ***/
+	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
 	
 	reg vco_out = 0;
 	assign vco = vco_out;
-	reg fb_1a = 0;
 	always @(posedge clk_50) begin
-		fb_1a <= fb;
-		
 		if (ctr > period) begin
 			ctr <= 0;
 			vco_out <= ~vco_out;
-			if (vco_out == 0) /* positive edge of VCO */ begin
-				if (~fb) /* feedback lags behind the VCO */
-					slew_slow <= 1;
-				slew_fast <= 0;
-			end else
-				slew_slow <= 0; /* don't slew forever */
 		end else begin
-			ctr <= ctr + 1;
-			if (fb && vco_out)
-				slew_slow <= 0;
-			if (fb && ~fb_1a && ~vco_out) /* feedback leads the VCO */
-				slew_fast <= 1;
+			ctr <= ctr + 1 + do_phase_up - do_phase_dn;
 		end
-		
-//		slew_fast <= (fb ^ vco_out);
-//		slew_slow <= ~(fb ^ vco_out);
 	end
+	
+	/*** Phase comparator network ***/
+	
+	reg vco_1a = 0;
+	reg fb_1a = 0;
+	reg up_sr = 0;
+	reg down_sr = 0;
+	
+	always @(posedge clk_50) begin
+		vco_1a <= vco;
+		fb_1a <= fb;
+		
+		if (up_sr & down_sr) begin
+			up_sr <= 0;
+			down_sr <= 0;
+		end else begin
+			if (vco & ~vco_1a)
+				down_sr <= 1;
+			if (fb & ~fb_1a)
+				up_sr <= 1;
+		end
+	end
+	
+	always @(*) begin
+		slew_fast = up_sr & ~down_sr;
+		slew_slow = down_sr & ~up_sr;
+	end
+	
+	/*** Display logic ***/
 	
 	reg [20:0] displayctr = 0;
 	reg [15:0] periodlat = 0;
