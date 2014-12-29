@@ -83,6 +83,36 @@ module Drive7Seg(
 	                         display[3:0];
 endmodule
 
+module bcd(
+	input [16:0] inp,
+	output wire [16:0] bcd);
+	
+	reg [3:0] thou, hund, ten, one;
+	
+	integer i;
+	always @(*) begin
+		thou = 0;
+		hund = 0;
+		ten = 0;
+		one = 0;
+		
+		for (i = 15; i >= 0; i = i - 1) begin
+			if (thou >= 5)
+				thou = thou + 3;
+			if (hund >= 5)
+				hund = hund + 3;
+			if (ten >= 5)
+				ten = ten + 3;
+			if (one >= 5)
+				one = one + 3;
+			
+			{thou,hund,ten,one} = {thou[2:0], hund, ten, one, inp[i]};
+		end
+	end
+	
+	assign bcd={thou,hund,ten,one};
+endmodule
+
 module ufpgapll(
 	input xtal,
 	input [3:0] btns,
@@ -108,15 +138,14 @@ module ufpgapll(
 		fb <= fb_s0;
 	end
 	
-	/* "period", of course, is really period / 2. */
-	reg [9:0] period = 10'd1000;
-	reg [9:0] period_min = 10'd10; /* about 10 MHz */
-	reg [9:0] period_max = 10'd850; /* about 28 kHz */
+	reg [9:0] freq = 10'd1000;
+	reg [9:0] freq_min = 10'd10; /* about 10 MHz */
+	reg [9:0] freq_max = 10'd2000; /* about 28 kHz */
 	
-	/*** VCO period control network ***/
+	/*** VCO freq control network ***/
 	
-	parameter SLEW_CENTER = {1'b1, 11'h0};
-	parameter SLEW_DIV = {1'b0, {11{1'b1}}};
+	parameter SLEW_CENTER = {1'b1, 8'h0};
+	parameter SLEW_DIV = {1'b0, {8{1'b1}}};
 	
 	reg [12:0] slew_cur = SLEW_CENTER;
 	
@@ -128,19 +157,18 @@ module ufpgapll(
 	reg do_slew_fast_1a = 0;
 	reg do_slew_slow_1a = 0;
 
-	wire [9:0] period_next = period + do_slew_slow_1a - do_slew_fast_1a;
-//	wire [15:0] period_next = 16'd60; /* around 2.4 microseconds */
+	wire [15:0] freq_next = freq - do_slew_slow_1a + do_slew_fast_1a;
 	
 	assign led = {do_slew_slow, do_slew_fast, slew_slow, slew_fast};
 	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
-		if (period_next >= period_max)
-			period <= period_max;
-		else if (period_next <= period_min)
-			period <= period_min;
+		if (freq_next >= freq_max)
+			freq <= freq_max;
+		else if (freq_next <= freq_min)
+			freq <= freq_min;
 		else
-			period <= period_next;
+			freq <= freq_next;
 		
 		slew_cur <= (do_slew_slow_1a | do_slew_fast_1a)
 		            ? SLEW_CENTER
@@ -149,32 +177,12 @@ module ufpgapll(
 		do_slew_fast_1a <= do_slew_fast;
 	end
 	
-	/*** VCO proportional phase adjust network ***/
-	
-	parameter PROP_CENTER = {1'b1, 5'h0};
-	parameter PROP_DIV    = 6'h2;
-	
-	reg [5:0] prop_cur = PROP_CENTER;
-	
-	wire do_phase_up = prop_cur <= (PROP_CENTER - PROP_DIV);
-	wire do_phase_dn = prop_cur >= (PROP_CENTER + PROP_DIV);
-	
-	always @(posedge clk_50) begin
-		prop_cur <= prop_cur + slew_slow - slew_fast - (do_phase_dn ? PROP_DIV : 0) + (do_phase_up ? PROP_DIV : 0);
-	end
-
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
 	
-	reg vco_out = 0;
-	assign vco = vco_out;
+	assign vco = ctr[15];
 	always @(posedge clk_50) begin
-		if (ctr > period) begin
-			ctr <= 0;
-			vco_out <= ~vco_out;
-		end else begin
-			ctr <= ctr + 1 + do_phase_up - do_phase_dn;
-		end
+		ctr <= ctr + freq + (16'h100 * slew_fast) - (16'h100 * slew_slow);
 	end
 	
 	/*** Phase comparator network ***/
@@ -206,12 +214,27 @@ module ufpgapll(
 	
 	/*** Display logic ***/
 	
+	/* frequency in KHz is freq / 2^16 * 50 000 */
+	
+	reg [31:0] freq_out;
+	wire [15:0] freq_bcd;
+	bcd bcd(freq_out[31:16], freq_bcd);
+	reg [15:0] freq_bcd_1a = 0;
+	reg [15:0] freq_bcd_2a = 0;
+	reg [15:0] freq_bcd_3a = 0;
+
+	
 	reg [20:0] displayctr = 0;
-	reg [15:0] periodlat = 0;
+	reg [15:0] freqlat = 0;
 	always @(posedge clk_50) begin
 		displayctr <= displayctr + 1;
-		if (&displayctr)
-			periodlat <= period;
+		freq_out <= freq * 16'd50000;
+		freq_bcd_1a <= freq_bcd;
+		freq_bcd_2a <= freq_bcd_1a;
+		freq_bcd_3a <= freq_bcd_2a;
+		if (&displayctr) begin
+			freqlat <= freq_bcd_3a;
+		end
 	end
 	
 	wire [15:0] display =
@@ -219,7 +242,7 @@ module ufpgapll(
 	  btns[1] ? 16'h4567 :
 	  btns[2] ? 16'h89AB :
 	  btns[3] ? 16'hCDEF :
-	            periodlat;
+	            freqlat;
 	wire [3:0] display_alive = 4'b1111;
 	
 	Drive7Seg drive(clk_50, display, display_alive, cath, ano);
