@@ -243,7 +243,11 @@ module ufpgapll(
 	  btns[2] ? 16'h89AB :
 	  btns[3] ? 16'hCDEF :
 	            freqlat;
-	wire [3:0] display_alive = 4'b1111;
+	wire [3:0] display_alive =
+	   { |display[15:12],
+	     display_alive[3] | |display[11:8],
+	     display_alive[2] | |display[7:4],
+	     display_alive[1] | |display[3:0]};
 	
 	Drive7Seg drive(clk_50, display, display_alive, cath, ano);
 endmodule
