@@ -247,7 +247,7 @@ module ufpgapll(
 	reg [15:0] shift_small = 0;
 	wire [1:0] shift_large = sw[1:0];
 	
-	wire [15:0] ctr_ofs = ctr + shift_small + {shift_large,14'b0};
+	wire [15:0] ctr_ofs = ctr - shift_small - {shift_large,14'b0};
 	reg ctr_ofs_l = 0;
 	assign pllout = ctr_ofs_l;
 	
@@ -262,9 +262,9 @@ module ufpgapll(
 			if (btns[0] & btns[1])
 				shift_small <= 0;
 			else if (btns[0])
-				shift_small <= shift_small - 1;
-			else if (btns[1])
 				shift_small <= shift_small + 1;
+			else if (btns[1])
+				shift_small <= shift_small - 1;
 		end
 	end
 
@@ -273,6 +273,7 @@ module ufpgapll(
 	/* frequency in KHz is freq / 2^16 * 50 000 */
 	
 	reg [31:0] freq_out;
+	wire [15:0] shift_amt = -(shift_small + {shift_large, 14'b0});
 	reg [31:0] shift_out;
 	wire [15:0] freq_bcd;
 	bcd fbcd(freq_out[31:16], freq_bcd);
@@ -299,7 +300,7 @@ module ufpgapll(
 			freqlat <= freq_bcd_3a;
 		end
 		
-		shift_out <= (shift_small + {shift_large,14'b0}) * 16'd360;
+		shift_out <= shift_amt * 16'd360;
 		shift_bcd_1a <= shift_bcd;
 		shift_bcd_2a <= shift_bcd_1a;
 		shift_bcd_3a <= shift_bcd_2a;
