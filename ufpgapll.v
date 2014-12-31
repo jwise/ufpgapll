@@ -212,7 +212,7 @@ module ufpgapll(
 	
 	assign vco = ctr[15];
 	always @(posedge clk_50) begin
-		ctr <= ctr + freq + (16'h100 * slew_fast) - (16'h100 * slew_slow);
+		ctr <= ctr + freq + ((freq / 2) * slew_fast) - ((freq / 2) * slew_slow);
 	end
 	
 	/*** Phase comparator network ***/
