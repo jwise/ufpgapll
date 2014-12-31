@@ -144,7 +144,7 @@ module ufpgapll(
 	parameter FREQ_MAX = 64'd400000; /* Hz */
 	
 	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
-	parameter NOSIG_LOCKOUT = 32'd50000000 / FREQ_MIN * 32'd5;
+	parameter NOSIG_LOCKOUT = 32'd50000000 / FREQ_MIN * 32'd2;
 	
 	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / 32'd50000000;
 	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / 32'd50000000;
