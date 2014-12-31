@@ -66,11 +66,11 @@ module Drive7Seg(
 	reg [3:0] ano = 4'b1110;
 	assign ano_out = ano | ~alive;
 
-	reg [9:0] counter = 10'h0;
+	reg [12:0] counter = 0;
 	
 	always @(posedge clk10) begin
-		counter <= counter + 10'h1;
-		if (counter == 10'h0)
+		counter <= counter + 1;
+		if (counter == 0)
 			ano <= {ano[0], ano[3:1]};
 	end
 	
@@ -116,6 +116,7 @@ endmodule
 module ufpgapll(
 	input xtal,
 	input [3:0] btns,
+	input [3:0] sw,
 	output wire [7:0] cath,
 	output wire [3:0] ano,
 	output wire [3:0] led,
@@ -123,7 +124,7 @@ module ufpgapll(
 	output wire [1:0] stio,
 	
 	input fb_u,
-	output wire vco
+	output wire pllout
 	);
 	
 	wire xbuf;
@@ -138,14 +139,25 @@ module ufpgapll(
 		fb <= fb_s0;
 	end
 	
-	reg [9:0] freq = 10'd1000;
-	reg [9:0] freq_min = 10'd10; /* about 10 MHz */
-	reg [9:0] freq_max = 10'd2000; /* about 28 kHz */
+	parameter FREQ_MIN = 64'd50000; /* Hz */
+	parameter FREQ_DEFAULT = 64'd250000; /* Hz */
+	parameter FREQ_MAX = 64'd400000; /* Hz */
+	
+	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
+	parameter NOSIG_LOCKOUT = 32'd50000000 / FREQ_MIN * 32'd5;
+	
+	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / 32'd50000000;
+	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / 32'd50000000;
+	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / 32'd50000000;
 	
 	/*** VCO freq control network ***/
+
+	reg [9:0] freq = FREQ_DEFAULT_RAW;
+	reg [9:0] freq_min = FREQ_MIN_RAW;
+	reg [9:0] freq_max = FREQ_MAX_RAW;
 	
-	parameter SLEW_CENTER = {1'b1, 8'h0};
-	parameter SLEW_DIV = {1'b0, {8{1'b1}}};
+	parameter SLEW_CENTER = {1'b1, 9'h0};
+	parameter SLEW_DIV = {1'b0, {9{1'b1}}};
 	
 	reg [12:0] slew_cur = SLEW_CENTER;
 	
@@ -156,14 +168,17 @@ module ufpgapll(
 	wire do_slew_slow = slew_cur >= (SLEW_CENTER + SLEW_DIV);
 	reg do_slew_fast_1a = 0;
 	reg do_slew_slow_1a = 0;
+	
+	wire lockout;
 
 	wire [15:0] freq_next = freq - do_slew_slow_1a + do_slew_fast_1a;
 	
-	assign led = {do_slew_slow, do_slew_fast, slew_slow, slew_fast};
 	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
-		if (freq_next >= freq_max)
+		if (lockout)
+			freq <= freq;
+		else if (freq_next >= freq_max)
 			freq <= freq_max;
 		else if (freq_next <= freq_min)
 			freq <= freq_min;
@@ -175,6 +190,21 @@ module ufpgapll(
 		            : (slew_cur + slew_slow - slew_fast);
 		do_slew_slow_1a <= do_slew_slow;
 		do_slew_fast_1a <= do_slew_fast;
+	end
+	
+	/*** Frequency lockout control logic ***/
+	reg [15:0] lockout_ctr = 0;
+	reg last_fb = 0;
+	
+	assign lockout = (lockout_ctr == NOSIG_LOCKOUT);
+	
+	always @(posedge clk_50) begin
+		last_fb <= fb;
+		
+		if (fb ^ last_fb)
+			lockout_ctr <= 0;
+		else if (lockout_ctr < NOSIG_LOCKOUT)
+			lockout_ctr <= lockout_ctr + 1;
 	end
 	
 	/*** VCO ***/
@@ -212,22 +242,55 @@ module ufpgapll(
 		slew_slow = down_sr & ~up_sr;
 	end
 	
+	/*** Phase offset logic ***/
+	
+	reg [15:0] shift_small = 0;
+	wire [1:0] shift_large = sw[1:0];
+	
+	wire [15:0] ctr_ofs = ctr + shift_small + {shift_large,14'b0};
+	reg ctr_ofs_l = 0;
+	assign pllout = ctr_ofs_l;
+	
+	always @(posedge clk_50)
+		ctr_ofs_l <= ctr_ofs[15]; /* avoid glitches */
+	
+	reg [15:0] pha_ctr;
+	always @(posedge clk_50) begin
+		pha_ctr <= pha_ctr + 1;
+		
+		if (&pha_ctr) begin
+			if (btns[0] & btns[1])
+				shift_small <= 0;
+			else if (btns[0])
+				shift_small <= shift_small - 1;
+			else if (btns[1])
+				shift_small <= shift_small + 1;
+		end
+	end
+
 	/*** Display logic ***/
 	
 	/* frequency in KHz is freq / 2^16 * 50 000 */
 	
 	reg [31:0] freq_out;
+	reg [31:0] shift_out;
 	wire [15:0] freq_bcd;
-	bcd bcd(freq_out[31:16], freq_bcd);
+	bcd fbcd(freq_out[31:16], freq_bcd);
 	reg [15:0] freq_bcd_1a = 0;
 	reg [15:0] freq_bcd_2a = 0;
 	reg [15:0] freq_bcd_3a = 0;
 
+	wire [15:0] shift_bcd;
+	bcd sbcd(shift_out[31:16], shift_bcd);
+	reg [15:0] shift_bcd_1a = 0;
+	reg [15:0] shift_bcd_2a = 0;
+	reg [15:0] shift_bcd_3a = 0;
 	
 	reg [20:0] displayctr = 0;
 	reg [15:0] freqlat = 0;
 	always @(posedge clk_50) begin
 		displayctr <= displayctr + 1;
+
 		freq_out <= freq * 16'd50000;
 		freq_bcd_1a <= freq_bcd;
 		freq_bcd_2a <= freq_bcd_1a;
@@ -235,19 +298,27 @@ module ufpgapll(
 		if (&displayctr) begin
 			freqlat <= freq_bcd_3a;
 		end
+		
+		shift_out <= (shift_small + {shift_large,14'b0}) * 16'd360;
+		shift_bcd_1a <= shift_bcd;
+		shift_bcd_2a <= shift_bcd_1a;
+		shift_bcd_3a <= shift_bcd_2a;
 	end
 	
+	assign led = {lockout, 1'b0, slew_slow, slew_fast};
+	
 	wire [15:0] display =
-	  btns[0] ? 16'h1234 :
-	  btns[1] ? 16'h4567 :
-	  btns[2] ? 16'h89AB :
-	  btns[3] ? 16'hCDEF :
+	  btns[0] ? shift_bcd_3a :
+	  btns[1] ? shift_bcd_3a :
+	  btns[2] ? freq_min :
+	  btns[3] ? freq_max :
 	            freqlat;
 	wire [3:0] display_alive =
 	   { |display[15:12],
 	     display_alive[3] | |display[11:8],
 	     display_alive[2] | |display[7:4],
-	     display_alive[1] | |display[3:0]};
+	     1'b1
+	   };
 	
 	Drive7Seg drive(clk_50, display, display_alive, cath, ano);
 endmodule
