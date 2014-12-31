@@ -140,7 +140,7 @@ module ufpgapll(
 	end
 	
 	parameter FREQ_MIN = 64'd50000; /* Hz */
-	parameter FREQ_DEFAULT = 64'd250000; /* Hz */
+	parameter FREQ_DEFAULT = 64'd125000; /* Hz */
 	parameter FREQ_MAX = 64'd400000; /* Hz */
 	
 	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
@@ -176,7 +176,9 @@ module ufpgapll(
 	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
-		if (lockout)
+		if (btns[2])
+			freq <= FREQ_DEFAULT_RAW;
+		else if (lockout)
 			freq <= freq;
 		else if (freq_next >= freq_max)
 			freq <= freq_max;
