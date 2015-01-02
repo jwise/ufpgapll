@@ -164,10 +164,10 @@ module ufpgapll(
 	reg slew_slow = 0; /* i.e., become slower */
 	reg slew_fast = 0; /* i.e., become faster */
 
-	wire do_slew_fast = slew_cur <= (SLEW_CENTER - SLEW_DIV);
-	wire do_slew_slow = slew_cur >= (SLEW_CENTER + SLEW_DIV);
 	reg do_slew_fast_1a = 0;
 	reg do_slew_slow_1a = 0;
+	wire do_slew_fast = (slew_cur <= (SLEW_CENTER - SLEW_DIV)) & ~do_slew_fast_1a;
+	wire do_slew_slow = (slew_cur >= (SLEW_CENTER + SLEW_DIV)) & ~do_slew_slow_1a;
 	
 	wire lockout;
 
