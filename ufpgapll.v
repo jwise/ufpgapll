@@ -84,8 +84,8 @@ module Drive7Seg(
 endmodule
 
 module bcd(
-	input [16:0] inp,
-	output wire [16:0] bcd);
+	input [15:0] inp,
+	output wire [15:0] bcd);
 	
 	reg [3:0] thou, hund, ten, one;
 	
@@ -144,22 +144,22 @@ module ufpgapll(
 	parameter FREQ_MAX = 64'd400000; /* Hz */
 	
 	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
-	parameter NOSIG_LOCKOUT = 32'd50000000 / FREQ_MIN * 32'd2;
+	parameter NOSIG_LOCKOUT = 64'd50000000 / FREQ_MIN * 32'd2;
 	
-	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / 32'd50000000;
-	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / 32'd50000000;
-	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / 32'd50000000;
+	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / 64'd50000000;
+	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / 64'd50000000;
+	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / 64'd50000000;
 	
 	/*** VCO freq control network ***/
 
-	reg [9:0] freq = FREQ_DEFAULT_RAW;
-	reg [9:0] freq_min = FREQ_MIN_RAW;
-	reg [9:0] freq_max = FREQ_MAX_RAW;
+	reg [9:0] freq = FREQ_DEFAULT_RAW[9:0];
+	reg [9:0] freq_min = FREQ_MIN_RAW[9:0];
+	reg [9:0] freq_max = FREQ_MAX_RAW[9:0];
 	
 	parameter SLEW_CENTER = {1'b1, 9'h0};
 	parameter SLEW_DIV = {1'b0, {9{1'b1}}};
 	
-	reg [12:0] slew_cur = SLEW_CENTER;
+	reg [9:0] slew_cur = SLEW_CENTER;
 	
 	reg slew_slow = 0; /* i.e., become slower */
 	reg slew_fast = 0; /* i.e., become faster */
@@ -171,13 +171,13 @@ module ufpgapll(
 	
 	wire lockout;
 
-	wire [15:0] freq_next = freq - do_slew_slow_1a + do_slew_fast_1a;
+	wire [9:0] freq_next = freq - {9'b0,do_slew_slow_1a} + {9'b0,do_slew_fast_1a};
 	
 	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
 		if (btns[2])
-			freq <= FREQ_DEFAULT_RAW;
+			freq <= FREQ_DEFAULT_RAW[9:0];
 		else if (lockout)
 			freq <= freq;
 		else if (freq_next >= freq_max)
@@ -189,7 +189,7 @@ module ufpgapll(
 		
 		slew_cur <= (do_slew_slow_1a | do_slew_fast_1a)
 		            ? SLEW_CENTER
-		            : (slew_cur + slew_slow - slew_fast);
+		            : (slew_cur + {9'b0,slew_slow} - {9'b0,slew_fast});
 		do_slew_slow_1a <= do_slew_slow;
 		do_slew_fast_1a <= do_slew_fast;
 	end
@@ -198,23 +198,23 @@ module ufpgapll(
 	reg [15:0] lockout_ctr = 0;
 	reg last_fb = 0;
 	
-	assign lockout = (lockout_ctr == NOSIG_LOCKOUT);
+	assign lockout = (lockout_ctr == NOSIG_LOCKOUT[15:0]);
 	
 	always @(posedge clk_50) begin
 		last_fb <= fb;
 		
 		if (fb ^ last_fb)
 			lockout_ctr <= 0;
-		else if (lockout_ctr < NOSIG_LOCKOUT)
+		else if (lockout_ctr < NOSIG_LOCKOUT[15:0])
 			lockout_ctr <= lockout_ctr + 1;
 	end
 	
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
 	
-	assign vco = ctr[15];
+	wire vco = ctr[15];
 	always @(posedge clk_50) begin
-		ctr <= ctr + freq + ((freq / 2) * slew_fast) - ((freq / 2) * slew_slow);
+		ctr <= ctr + {6'b0,freq} + (({6'b0,freq} / 2) * slew_fast) - (({6'b0,freq} / 2) * slew_slow);
 	end
 	
 	/*** Phase comparator network ***/
@@ -313,13 +313,13 @@ module ufpgapll(
 	wire [15:0] display =
 	  btns[0] ? shift_bcd_3a :
 	  btns[1] ? shift_bcd_3a :
-	  btns[2] ? freq_min :
-	  btns[3] ? freq_max :
+	  btns[2] ? {6'b0,freq_min} :
+	  btns[3] ? {6'b0,freq_max} :
 	            freqlat;
-	wire [3:0] display_alive =
+	wire [3:0] display_alive = 
 	   { |display[15:12],
-	     display_alive[3] | |display[11:8],
-	     display_alive[2] | |display[7:4],
+	     |display[15:8],
+	     |display[15:4],
 	     1'b1
 	   };
 	
