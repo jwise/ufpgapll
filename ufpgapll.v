@@ -157,7 +157,7 @@ module ufpgapll(
 	reg [9:0] freq_max = FREQ_MAX_RAW[9:0];
 	
 	parameter SLEW_CENTER = {1'b1, 9'h0};
-	parameter SLEW_DIV = {1'b0, {9{1'b1}}};
+	parameter SLEW_DIV = {1'b0, {7{1'b1}}, 2'b0};
 	
 	reg [9:0] slew_cur = SLEW_CENTER;
 	
