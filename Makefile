@@ -3,7 +3,7 @@ VLOGS = ufpgapll.v
 
 VLOGS_ALL = $(VLOGS)
 
-all: fpga_target
+all: fpga_target sim
 
 prog: fpga_target
 	sudo djtgcfg -d Nexys2 prog -i 0 -f $(TARGET).bit
@@ -60,6 +60,14 @@ $(TARGET).svf: $(TARGET).bit impact.cmd
 	sed -e s/XXX/$(subst .bit,,$<)/ < impact.cmd > tmp.cmd
 	impact -batch tmp.cmd
 
+sim: obj_dir/Vufpgapll
+
+obj_dir/Vufpgapll: tb.cpp obj_dir/Vufpgapll.mk
+	make -C obj_dir -f Vufpgapll.mk
+
+obj_dir/Vufpgapll.mk: ufpgapll.v
+	verilator --cc ufpgapll tb.cpp --exe --trace --top-module ufpgapll
+
 clean:
 	rm -f $(TARGET).bgn $(TARGET).ngc $(TARGET).svf $(TARGET).ngd $(TARGET).bit $(TARGET).twr $(TARGET).ncd $(TARGET)_map.ncd $(TARGET)_map.*
 	rm -f $(TARGET).bld $(TARGET).drc $(TARGET)_ngdbuild.xrpt $(TARGET)_pad.* $(TARGET).pad $(TARGET).par $(TARGET)_par.xrpt $(TARGET).ngr
@@ -71,4 +79,5 @@ clean:
 	rm -f _impactbatch.log
 	rm -f $(TARGET).prj
 	rm -f $(TARGET).lso
+	rm -f obj_dir
 
