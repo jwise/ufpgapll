@@ -30,7 +30,8 @@ BITGEN_OPTS = \
 	-g LCK_cycle:NoWait \
 	-g Security:None \
 	-g DonePipe:No \
-	-g DriveDone:No
+	-g DriveDone:No \
+	-g compress
 
 fpga_target: $(TARGET).svf
 
