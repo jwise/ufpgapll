@@ -212,7 +212,9 @@ module ufpgapll(
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
 	
-	wire vco = ctr[15];
+	wire vco; /* delayed VCO, from later. */
+	
+	wire vco_raw = ctr[15];
 	always @(posedge clk_50) begin
 		ctr <= ctr + {6'b0,freq} + (({6'b0,freq} / 2) * slew_fast) - (({6'b0,freq} / 2) * slew_slow);
 	end
@@ -250,11 +252,7 @@ module ufpgapll(
 	wire [1:0] shift_large = sw[1:0];
 	
 	wire [15:0] ctr_ofs = ctr - shift_small - {shift_large,14'b0};
-	reg ctr_ofs_l = 0;
-	assign pllout = ctr_ofs_l;
-	
-	always @(posedge clk_50)
-		ctr_ofs_l <= ctr_ofs[15]; /* avoid glitches */
+	wire vco_phase = ctr_ofs[15];
 	
 	reg [15:0] pha_ctr;
 	always @(posedge clk_50) begin
@@ -269,6 +267,34 @@ module ufpgapll(
 				shift_small <= shift_small - 1;
 		end
 	end
+	
+	/*** Time offset logic ***/
+	
+	reg [7:0] shift_cyc = 8'h80;
+	
+	reg [255:0] vco_shift = 256'b0; /* raw VCO output, temporally delayed */
+	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
+	
+	always @(posedge clk_50) begin
+		vco_shift = {vco_shift[254:0], vco_raw};
+		vco_phase_shift = {vco_phase_shift[254:0], vco_phase};
+	end
+	
+	assign vco = vco_shift[128];
+	assign pllout = vco_phase_shift[shift_cyc];
+	
+	always @(posedge clk_50) begin
+		if (&pha_ctr) begin
+			if (btns[2] & btns[3])
+				shift_cyc <= 8'h80;
+			else if (btns[2])
+				shift_cyc <= shift_cyc + 1;
+			else if (btns[3])
+				shift_cyc <= shift_cyc - 1;
+		end
+	end
+	
+	
 
 	/*** Display logic ***/
 	
@@ -291,6 +317,7 @@ module ufpgapll(
 	
 	reg [20:0] displayctr = 0;
 	reg [15:0] freqlat = 0;
+	
 	always @(posedge clk_50) begin
 		displayctr <= displayctr + 1;
 
@@ -313,8 +340,8 @@ module ufpgapll(
 	wire [15:0] display =
 	  btns[0] ? shift_bcd_3a :
 	  btns[1] ? shift_bcd_3a :
-	  btns[2] ? {6'b0,freq_min} :
-	  btns[3] ? {6'b0,freq_max} :
+	  btns[2] ? {8'h0,shift_cyc} :
+	  btns[3] ? {8'h0,shift_cyc} :
 	            freqlat;
 	wire [3:0] display_alive = 
 	   { |display[15:12],
