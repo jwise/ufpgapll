@@ -32,26 +32,27 @@ endmodule
 
 module Decode7(
 	input [3:0] num,
+	input decimal,
 	output reg [7:0] segs);
 	
 	always @(*)
 		case (num)
-		4'h0: segs = ~8'b00111111;
-		4'h1: segs = ~8'b00000110;
-		4'h2: segs = ~8'b01011011;
-		4'h3: segs = ~8'b01001111;
-		4'h4: segs = ~8'b01100110;
-		4'h5: segs = ~8'b01101101;
-		4'h6: segs = ~8'b01111101;
-		4'h7: segs = ~8'b00000111;
-		4'h8: segs = ~8'b01111111;
-		4'h9: segs = ~8'b01101111;
-		4'hA: segs = ~8'b01110111;
-		4'hB: segs = ~8'b01111100;
-		4'hC: segs = ~8'b00111001;
-		4'hD: segs = ~8'b01011110;
-		4'hE: segs = ~8'b01111001;
-		4'hF: segs = ~8'b01110001;
+		4'h0: segs = ~{decimal, 7'b0111111};
+		4'h1: segs = ~{decimal, 7'b0000110};
+		4'h2: segs = ~{decimal, 7'b1011011};
+		4'h3: segs = ~{decimal, 7'b1001111};
+		4'h4: segs = ~{decimal, 7'b1100110};
+		4'h5: segs = ~{decimal, 7'b1101101};
+		4'h6: segs = ~{decimal, 7'b1111101};
+		4'h7: segs = ~{decimal, 7'b0000111};
+		4'h8: segs = ~{decimal, 7'b1111111};
+		4'h9: segs = ~{decimal, 7'b1101111};
+		4'hA: segs = ~{decimal, 7'b1110111};
+		4'hB: segs = ~{decimal, 7'b1111100};
+		4'hC: segs = ~{decimal, 7'b0111001};
+		4'hD: segs = ~{decimal, 7'b1011110};
+		4'hE: segs = ~{decimal, 7'b1111001};
+		4'hF: segs = ~{decimal, 7'b1110001};
 		endcase
 	
 endmodule
@@ -59,6 +60,7 @@ endmodule
 module Drive7Seg(
 	input clk10,
 	input [15:0] display,
+	input [3:0] decimal,
 	input [3:0] alive,
 	output wire [7:0] cath,
 	output wire [3:0] ano_out);
@@ -75,12 +77,17 @@ module Drive7Seg(
 	end
 	
 	wire [3:0] num;
-	Decode7 deco(num, cath);
+	wire cdecimal;
+	Decode7 deco(num, cdecimal, cath);
 	
 	assign num = (~ano[3]) ? display[15:12] :
 	             (~ano[2]) ? display[11:8] :
 	             (~ano[1]) ? display[7:4] :
 	                         display[3:0];
+	assign cdecimal = (~ano[3]) ? decimal[3] :
+	                  (~ano[2]) ? decimal[2] :
+	                  (~ano[1]) ? decimal[1] :
+	                              decimal[0];
 endmodule
 
 module bcd(
@@ -350,5 +357,7 @@ module ufpgapll(
 	     1'b1
 	   };
 	
-	Drive7Seg drive(clk_50, display, display_alive, cath, ano);
+	wire [3:0] display_decimal = 4'b0000;
+	
+	Drive7Seg drive(clk_50, display, display_decimal, display_alive, cath, ano);
 endmodule
