@@ -146,9 +146,9 @@ module ufpgapll(
 		fb <= fb_s0;
 	end
 	
-	parameter FREQ_MIN = 64'd50000; /* Hz */
+	parameter FREQ_MIN = 64'd100000; /* Hz */
 	parameter FREQ_DEFAULT = 64'd125000; /* Hz */
-	parameter FREQ_MAX = 64'd400000; /* Hz */
+	parameter FREQ_MAX = 64'd200000; /* Hz */
 	
 	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
 	parameter NOSIG_LOCKOUT = 64'd50000000 / FREQ_MIN * 32'd2;
@@ -183,9 +183,7 @@ module ufpgapll(
 	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
-		if (btns[2])
-			freq <= FREQ_DEFAULT_RAW[9:0];
-		else if (lockout)
+		if (lockout)
 			freq <= freq;
 		else if (freq_next >= freq_max)
 			freq <= freq_max;
@@ -269,9 +267,9 @@ module ufpgapll(
 			if (btns[0] & btns[1])
 				shift_small <= 0;
 			else if (btns[0])
-				shift_small <= shift_small + 1;
+				shift_small <= shift_small + 1; // phase lag
 			else if (btns[1])
-				shift_small <= shift_small - 1;
+				shift_small <= shift_small - 1; // phase lead
 		end
 	end
 	
@@ -279,25 +277,29 @@ module ufpgapll(
 	
 	reg [7:0] shift_cyc = 8'h80;
 	
-	reg [255:0] vco_shift = 256'b0; /* raw VCO output, temporally delayed */
+	reg [128:0] vco_shift = 256'b0; /* raw VCO output, temporally delayed */
 	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
+	reg vco_phase_shifted = 0;
 	
 	always @(posedge clk_50) begin
-		vco_shift = {vco_shift[254:0], vco_raw};
-		vco_phase_shift = {vco_phase_shift[254:0], vco_phase};
+		vco_shift <= {vco_shift[127:0], vco_raw};
+		vco_phase_shift <= {vco_phase_shift[254:0], vco_phase};
+		vco_phase_shifted <= vco_phase_shift[shift_cyc]; /* avoid a glitch on the output */
 	end
 	
 	assign vco = vco_shift[128];
-	assign pllout = vco_phase_shift[shift_cyc];
+	assign pllout = vco_phase_shifted;
 	
+	reg [19:0] tm_ctr;
 	always @(posedge clk_50) begin
-		if (&pha_ctr) begin
+		tm_ctr <= tm_ctr + 1;
+		if (&tm_ctr) begin
 			if (btns[2] & btns[3])
 				shift_cyc <= 8'h80;
 			else if (btns[2])
-				shift_cyc <= shift_cyc + 1;
+				shift_cyc <= (&shift_cyc) ? shift_cyc : (shift_cyc + 1); // time lag
 			else if (btns[3])
-				shift_cyc <= shift_cyc - 1;
+				shift_cyc <= (~|shift_cyc) ? shift_cyc : (shift_cyc - 1); // time lead
 		end
 	end
 	
