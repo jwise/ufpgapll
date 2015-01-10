@@ -39,7 +39,7 @@ int main(int argc, char **argv, char **env) {
 #define TRACE
 #endif
 
-#define FREQ 150000
+#define FREQ 180000
 #define CYC (XTAL / (FREQ * 2))
 
 	while (time < 1000000) {

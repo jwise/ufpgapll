@@ -134,10 +134,30 @@ module ufpgapll(
 	output wire pllout
 	);
 	
+	/*** Tunables ***/
+	
+	parameter XTAL_FREQ = 64'd50000000; /* Hz */
+
+	parameter FREQ_LOCKOUT_LO = 64'd50000; /* Hz */
+	parameter FREQ_MIN = 64'd100000; /* Hz */
+	parameter FREQ_DEFAULT = 64'd125000; /* Hz */
+	parameter FREQ_MAX = 64'd200000; /* Hz */
+	parameter FREQ_LOCKOUT_HI = 64'd300000; /* Hz */
+	
+	parameter LOCKOUT_TIME = 64'd100000; /* ns */
+
+	parameter SLEW_RATE = 13; /* ns / Hz -- n.b.: 13 is upper limit in 9 bits */
+	
+	/* XXX: should at least calculate phase rate, but that is a huge pain to compute: it is in degrees / (VCO Hz * ns) or so */
+	
+	/*** Internal clock generation ***/
+	
 	wire xbuf;
 	IBUFG clkbuf(.O(xbuf), .I(xtal));
 	
 	wire clk_50 = xbuf;
+	
+	/*** Feedback synchronization network ***/
 	
 	reg fb_s0 = 0, fb = 0;
 	
@@ -146,16 +166,18 @@ module ufpgapll(
 		fb <= fb_s0;
 	end
 	
-	parameter FREQ_MIN = 64'd100000; /* Hz */
-	parameter FREQ_DEFAULT = 64'd125000; /* Hz */
-	parameter FREQ_MAX = 64'd200000; /* Hz */
+	/*** Computed parameters ***/
+	
+	parameter XTAL_NS = 64'd1000000000 / XTAL_FREQ; /* ns / clock */
 	
 	/* number of cycles of no input signal before PLL frequency adjustment is disabled */
-	parameter NOSIG_LOCKOUT = 64'd50000000 / FREQ_MIN * 32'd2;
+	parameter CYCLES_LOCKOUT_LO = XTAL_FREQ / (FREQ_LOCKOUT_LO * 64'd2);
+	parameter CYCLES_LOCKOUT_HI = XTAL_FREQ / (FREQ_LOCKOUT_HI * 64'd2);
+	parameter CYCLES_LOCKOUT = LOCKOUT_TIME / XTAL_NS;
 	
-	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / 64'd50000000;
-	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / 64'd50000000;
-	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / 64'd50000000;
+	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / XTAL_FREQ;
+	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / XTAL_FREQ;
+	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / XTAL_FREQ;
 	
 	/*** VCO freq control network ***/
 
@@ -164,7 +186,9 @@ module ufpgapll(
 	reg [9:0] freq_max = FREQ_MAX_RAW[9:0];
 	
 	parameter SLEW_CENTER = {1'b1, 9'h0};
-	parameter SLEW_DIV = {1'b0, {7{1'b1}}, 2'b0};
+	parameter SLEW_DIV = SLEW_RATE /* ns / Hz */
+	                     * XTAL_FREQ / 64'h10000 /* ns / frequency count */
+	                     / XTAL_NS /* clocks / frequency count */;
 	
 	reg [9:0] slew_cur = SLEW_CENTER;
 	
@@ -173,8 +197,8 @@ module ufpgapll(
 
 	reg do_slew_fast_1a = 0;
 	reg do_slew_slow_1a = 0;
-	wire do_slew_fast = (slew_cur <= (SLEW_CENTER - SLEW_DIV)) & ~do_slew_fast_1a;
-	wire do_slew_slow = (slew_cur >= (SLEW_CENTER + SLEW_DIV)) & ~do_slew_slow_1a;
+	wire do_slew_fast = (slew_cur <= (SLEW_CENTER - SLEW_DIV[9:0])) & ~do_slew_fast_1a;
+	wire do_slew_slow = (slew_cur >= (SLEW_CENTER + SLEW_DIV[9:0])) & ~do_slew_slow_1a;
 	
 	wire lockout;
 
@@ -200,19 +224,32 @@ module ufpgapll(
 	end
 	
 	/*** Frequency lockout control logic ***/
-	reg [15:0] lockout_ctr = 0;
+	reg [15:0] lockout_cyc_ctr = 0;
 	reg last_fb = 0;
 	
-	assign lockout = (lockout_ctr == NOSIG_LOCKOUT[15:0]);
+	wire lockout_freq_lo = lockout_cyc_ctr == CYCLES_LOCKOUT_LO[15:0];
+	wire lockout_freq_hi = (fb ^ last_fb) && (lockout_cyc_ctr <= CYCLES_LOCKOUT_HI[15:0]);
 	
 	always @(posedge clk_50) begin
 		last_fb <= fb;
 		
 		if (fb ^ last_fb)
-			lockout_ctr <= 0;
-		else if (lockout_ctr < NOSIG_LOCKOUT[15:0])
-			lockout_ctr <= lockout_ctr + 1;
+			lockout_cyc_ctr <= 0;
+		else if (lockout_cyc_ctr < CYCLES_LOCKOUT_LO[15:0])
+			lockout_cyc_ctr <= lockout_cyc_ctr + 1;
 	end
+	
+	wire lockout_trig = lockout_freq_lo || lockout_freq_hi;
+	
+	reg [15:0] lockout_tm_ctr = 0;
+	always @(posedge clk_50) begin
+		if (lockout_trig)
+			lockout_tm_ctr <= CYCLES_LOCKOUT[15:0];
+		else if (lockout_tm_ctr != 16'b0)
+			lockout_tm_ctr <= lockout_tm_ctr - 1;
+	end
+	
+	assign lockout = |lockout_tm_ctr;
 	
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
@@ -275,9 +312,9 @@ module ufpgapll(
 	
 	/*** Time offset logic ***/
 	
-	reg [7:0] shift_cyc = 8'h80;
+	reg [7:0] shift_cyc = 8'h73;
 	
-	reg [128:0] vco_shift = 256'b0; /* raw VCO output, temporally delayed */
+	reg [128:0] vco_shift = 129'b0; /* raw VCO output, temporally delayed */
 	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
 	reg vco_phase_shifted = 0;
 	
@@ -290,7 +327,7 @@ module ufpgapll(
 	assign vco = vco_shift[128];
 	assign pllout = vco_phase_shifted;
 	
-	reg [19:0] tm_ctr;
+	reg [20:0] tm_ctr;
 	always @(posedge clk_50) begin
 		tm_ctr <= tm_ctr + 1;
 		if (&tm_ctr) begin
