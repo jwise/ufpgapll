@@ -50,8 +50,13 @@ int main(int argc, char **argv, char **env) {
 		time++;
 		
 		tb->xtal = 1;
+		/* Normally, we flip it... */
 		if (((time / 2) % CYC) == 0)
 			tb->fb_u = !tb->fb_u;
+			
+		/* But if we're in the fux period... */
+		if (time >= 500000 && time < 550000)
+			tb->fb_u = 0;
 		tb->eval();
 		TRACE;
 		time++;
