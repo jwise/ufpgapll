@@ -326,7 +326,7 @@ module ufpgapll(
 		
 		if (&pha_ctr) begin
 			if (btns[0] & btns[1])
-				shift_small <= 0;
+				shift_small <= shift_small;
 			else if (btns[0])
 				shift_small <= shift_small + 1; // phase lag
 			else if (btns[1])
@@ -336,7 +336,7 @@ module ufpgapll(
 	
 	/*** Time offset logic ***/
 	
-	reg [7:0] shift_cyc = 8'h73;
+	reg [7:0] shift_cyc = 8'h70;
 	
 	reg [128:0] vco_shift = 129'b0; /* raw VCO output, temporally delayed */
 	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
@@ -351,12 +351,12 @@ module ufpgapll(
 	assign vco = vco_shift[128];
 	assign pllout = vco_phase_shifted;
 	
-	reg [20:0] tm_ctr;
+	reg [22:0] tm_ctr;
 	always @(posedge clk_50) begin
 		tm_ctr <= tm_ctr + 1;
 		if (&tm_ctr) begin
 			if (btns[2] & btns[3])
-				shift_cyc <= 8'h80;
+				shift_cyc <= shift_cyc;
 			else if (btns[2])
 				shift_cyc <= (&shift_cyc) ? shift_cyc : (shift_cyc + 1); // time lag
 			else if (btns[3])
