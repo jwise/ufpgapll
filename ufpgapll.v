@@ -133,8 +133,6 @@ module ufpgapll(
 	output wire gate_enbl
 	);
 	
-	assign gate_enbl = 1'b1;
-	
 	/*** Tunables ***/
 	
 	parameter XTAL_FREQ = 64'd50000000; /* Hz */
@@ -151,6 +149,9 @@ module ufpgapll(
 	
 	parameter FREQUENCY_LOOKBACK = 4; /* cycles */
 	parameter FREQUENCY_LOOKBACK_BITS = 2;
+	
+	parameter NOTE_FREQ = 64'd220; /* Hz */
+	parameter ON_TM = 64'd500; /* us */
 	
 	/* XXX: should at least calculate phase rate, but that is a huge pain to compute: it is in degrees / (VCO Hz * ns) or so */
 	
@@ -182,6 +183,9 @@ module ufpgapll(
 	parameter FREQ_DEFAULT_RAW = FREQ_DEFAULT * 64'd65536 / XTAL_FREQ;
 	parameter FREQ_MIN_RAW = FREQ_MIN * 64'd65536 / XTAL_FREQ;
 	parameter FREQ_MAX_RAW = FREQ_MAX * 64'd65536 / XTAL_FREQ;
+	
+	parameter NOTE_CYCLES = XTAL_FREQ / NOTE_FREQ;
+	parameter ON_CYCLES = ON_TM * 64'd1000 / XTAL_NS;
 	
 	/*** VCO freq control network ***/
 
@@ -256,13 +260,15 @@ module ufpgapll(
 	always @(posedge clk_50) begin
 		last_fb <= fb;
 		
-		if (fb ^ last_fb)
+		if (~gate_enbl)
+			lockout_cyc_ctr <= CYCLES_LOCKOUT_HI[15:0] + 1;
+		else if (fb ^ last_fb)
 			lockout_cyc_ctr <= 0;
 		else if (lockout_cyc_ctr < CYCLES_LOCKOUT_LO[15:0])
 			lockout_cyc_ctr <= lockout_cyc_ctr + 1;
 	end
 	
-	wire lockout_trig = lockout_freq_lo || lockout_freq_hi;
+	wire lockout_trig = (lockout_freq_lo || lockout_freq_hi) && gate_enbl;
 	
 	reg [15:0] lockout_tm_ctr = 0;
 	always @(posedge clk_50) begin
@@ -272,7 +278,7 @@ module ufpgapll(
 			lockout_tm_ctr <= lockout_tm_ctr - 1;
 	end
 	
-	assign lockout = |lockout_tm_ctr;
+	assign lockout = |lockout_tm_ctr || ~gate_enbl;
 	
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
@@ -364,6 +370,24 @@ module ufpgapll(
 	end
 	
 	
+	/*** Interruptor logic ***/
+	
+	reg [20:0] note_tm = NOTE_CYCLES[20:0];
+	always @(posedge clk_50)
+		note_tm <= (note_tm == 0) ? NOTE_CYCLES[20:0] : (note_tm - 1);
+	
+	reg [15:0] note_countdn = 16'h0;
+	always @(posedge clk_50)
+		if (note_tm == 0)
+			note_countdn <= ON_CYCLES[15:0];
+		else if (|note_countdn)
+			note_countdn <= note_countdn - 1;
+	
+	reg gate_enbl_r = 1'b1;
+	always @(posedge clk_50)
+		gate_enbl_r <= sw[2] | (|note_countdn);
+
+	assign gate_enbl = gate_enbl_r;
 
 	/*** Display logic ***/
 	
@@ -404,7 +428,7 @@ module ufpgapll(
 		shift_bcd_3a <= shift_bcd_2a;
 	end
 	
-	assign led = {lockout, 1'b0, slew_slow, slew_fast};
+	assign led = {lockout && gate_enbl, 1'b0, slew_slow, slew_fast};
 	
 	wire [15:0] display =
 	  btns[0] ? shift_bcd_3a :
