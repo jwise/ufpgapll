@@ -335,7 +335,7 @@ module ufpgapll(
 	
 	/*** Time offset logic ***/
 	
-	reg [7:0] shift_cyc = 8'h70;
+	reg [7:0] shift_cyc = 8'h6C;
 	
 	reg [128:0] vco_shift = 129'b0; /* raw VCO output, temporally delayed */
 	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
