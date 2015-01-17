@@ -128,11 +128,12 @@ module ufpgapll(
 	output wire [3:0] ano,
 	output wire [3:0] led,
 	
-	output wire [1:0] stio,
-	
 	input fb_u,
-	output wire pllout
+	output wire pllout,
+	output wire gate_enbl
 	);
+	
+	assign gate_enbl = 1'b1;
 	
 	/*** Tunables ***/
 	
@@ -203,8 +204,6 @@ module ufpgapll(
 	wire lockout;
 
 	wire [9:0] freq_next = freq - {9'b0,do_slew_slow_1a} + {9'b0,do_slew_fast_1a};
-	
-	assign stio = {slew_slow, slew_fast};
 	
 	always @(posedge clk_50) begin
 		if (lockout)
