@@ -143,11 +143,14 @@ module ufpgapll(
 	parameter FREQ_MIN = 64'd100000; /* Hz */
 	parameter FREQ_DEFAULT = 64'd125000; /* Hz */
 	parameter FREQ_MAX = 64'd200000; /* Hz */
-	parameter FREQ_LOCKOUT_HI = 64'd300000; /* Hz */
+	parameter FREQ_LOCKOUT_HI = 64'd210000; /* Hz */
 	
-	parameter LOCKOUT_TIME = 64'd100000; /* ns */
+	parameter LOCKOUT_TIME = 64'd1000000; /* ns */
 
 	parameter SLEW_RATE = 13; /* ns / Hz -- n.b.: 13 is upper limit in 9 bits */
+	
+	parameter FREQUENCY_LOOKBACK = 4; /* cycles */
+	parameter FREQUENCY_LOOKBACK_BITS = 2;
 	
 	/* XXX: should at least calculate phase rate, but that is a huge pain to compute: it is in degrees / (VCO Hz * ns) or so */
 	
@@ -202,12 +205,13 @@ module ufpgapll(
 	wire do_slew_slow = (slew_cur >= (SLEW_CENTER + SLEW_DIV[9:0])) & ~do_slew_slow_1a;
 	
 	wire lockout;
+	wire [9:0] freq_safe;
 
 	wire [9:0] freq_next = freq - {9'b0,do_slew_slow_1a} + {9'b0,do_slew_fast_1a};
 	
 	always @(posedge clk_50) begin
 		if (lockout)
-			freq <= freq;
+			freq <= freq_safe;
 		else if (freq_next >= freq_max)
 			freq <= freq_max;
 		else if (freq_next <= freq_min)
@@ -222,8 +226,28 @@ module ufpgapll(
 		do_slew_fast_1a <= do_slew_fast;
 	end
 	
+	/*** Frequency lookback FIFO ***/
+	reg [9:0] freq_lookback [FREQUENCY_LOOKBACK-1:0];
+	reg [FREQUENCY_LOOKBACK_BITS-1:0] freq_lookback_p = 0;
+	
+	integer i;
+	initial
+		for (i = 0; i < FREQUENCY_LOOKBACK; i = i + 1)
+			freq_lookback[i] = FREQ_DEFAULT_RAW[9:0];
+	
+	reg pllout_1a = 0;
+	always @(posedge clk_50) begin
+		pllout_1a <= pllout;
+		if (pllout && ~pllout_1a) begin
+			freq_lookback[freq_lookback_p] <= freq;
+			freq_lookback_p <= ({1'b0,freq_lookback_p} == FREQUENCY_LOOKBACK-1) ? 0 : freq_lookback_p + 1;
+		end
+	end
+	
+	assign freq_safe = freq_lookback[freq_lookback_p];
+	
 	/*** Frequency lockout control logic ***/
-	reg [15:0] lockout_cyc_ctr = 0;
+	reg [15:0] lockout_cyc_ctr = CYCLES_LOCKOUT_HI[15:0] + 1; /* avoid a sim-start lockout */
 	reg last_fb = 0;
 	
 	wire lockout_freq_lo = lockout_cyc_ctr == CYCLES_LOCKOUT_LO[15:0];
@@ -283,8 +307,8 @@ module ufpgapll(
 	end
 	
 	always @(*) begin
-		slew_fast = up_sr & ~down_sr;
-		slew_slow = down_sr & ~up_sr;
+		slew_fast = (up_sr & ~down_sr) && ~lockout;
+		slew_slow = (down_sr & ~up_sr) && ~lockout;
 	end
 	
 	/*** Phase offset logic ***/
@@ -301,7 +325,7 @@ module ufpgapll(
 		
 		if (&pha_ctr) begin
 			if (btns[0] & btns[1])
-				shift_small <= 0;
+				shift_small <= shift_small;
 			else if (btns[0])
 				shift_small <= shift_small + 1; // phase lag
 			else if (btns[1])
@@ -311,7 +335,7 @@ module ufpgapll(
 	
 	/*** Time offset logic ***/
 	
-	reg [7:0] shift_cyc = 8'h73;
+	reg [7:0] shift_cyc = 8'h70;
 	
 	reg [128:0] vco_shift = 129'b0; /* raw VCO output, temporally delayed */
 	reg [255:0] vco_phase_shift = 256'b0; /* phase shifted VCO output, temporally delayed */
@@ -326,12 +350,12 @@ module ufpgapll(
 	assign vco = vco_shift[128];
 	assign pllout = vco_phase_shifted;
 	
-	reg [20:0] tm_ctr;
+	reg [22:0] tm_ctr;
 	always @(posedge clk_50) begin
 		tm_ctr <= tm_ctr + 1;
 		if (&tm_ctr) begin
 			if (btns[2] & btns[3])
-				shift_cyc <= 8'h80;
+				shift_cyc <= shift_cyc;
 			else if (btns[2])
 				shift_cyc <= (&shift_cyc) ? shift_cyc : (shift_cyc + 1); // time lag
 			else if (btns[3])
