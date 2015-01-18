@@ -251,8 +251,10 @@ module ufpgapll(
 	assign freq_safe = freq_lookback[freq_lookback_p];
 	
 	/*** Frequency lockout control logic ***/
-	reg [15:0] lockout_cyc_ctr = CYCLES_LOCKOUT_HI[15:0] + 1; /* avoid a sim-start lockout */
+	reg [15:0] lockout_cyc_ctr = 0; /* sim-start lockout is avoided through inhibit, below */
 	reg last_fb = 0;
+	
+	wire lockout_inhibit;
 	
 	wire lockout_freq_lo = lockout_cyc_ctr == CYCLES_LOCKOUT_LO[15:0];
 	wire lockout_freq_hi = (fb ^ last_fb) && (lockout_cyc_ctr <= CYCLES_LOCKOUT_HI[15:0]);
@@ -260,15 +262,13 @@ module ufpgapll(
 	always @(posedge clk_50) begin
 		last_fb <= fb;
 		
-		if (~gate_enbl)
-			lockout_cyc_ctr <= CYCLES_LOCKOUT_HI[15:0] + 1;
-		else if (fb ^ last_fb)
+		if (fb ^ last_fb)
 			lockout_cyc_ctr <= 0;
 		else if (lockout_cyc_ctr < CYCLES_LOCKOUT_LO[15:0])
 			lockout_cyc_ctr <= lockout_cyc_ctr + 1;
 	end
 	
-	wire lockout_trig = (lockout_freq_lo || lockout_freq_hi) && gate_enbl;
+	wire lockout_trig = (lockout_freq_lo || lockout_freq_hi) && ~lockout_inhibit;
 	
 	reg [15:0] lockout_tm_ctr = 0;
 	always @(posedge clk_50) begin
@@ -278,7 +278,7 @@ module ufpgapll(
 			lockout_tm_ctr <= lockout_tm_ctr - 1;
 	end
 	
-	assign lockout = |lockout_tm_ctr || ~gate_enbl;
+	assign lockout = |lockout_tm_ctr || lockout_inhibit;
 	
 	/*** VCO ***/
 	reg [15:0] ctr = 16'h0000;
@@ -369,7 +369,6 @@ module ufpgapll(
 		end
 	end
 	
-	
 	/*** Interruptor logic ***/
 	
 	reg [20:0] note_tm = NOTE_CYCLES[20:0];
@@ -383,11 +382,25 @@ module ufpgapll(
 		else if (|note_countdn)
 			note_countdn <= note_countdn - 1;
 	
+	wire gate_enbl_req = sw[2] | (|note_countdn);
+	
+	/* Synchronize the interrupter with the PLL output. */
 	reg gate_enbl_r = 1'b1;
 	always @(posedge clk_50)
-		gate_enbl_r <= sw[2] | (|note_countdn);
+		if (~pllout && pllout_1a && ~gate_enbl_req)
+			gate_enbl_r <= 1'b0;
+		else if (pllout && ~pllout_1a && gate_enbl_req)
+			gate_enbl_r <= 1'b1;
 
 	assign gate_enbl = gate_enbl_r;
+	
+	/* Finally, lockout inhibit happens for three pllout transitions
+	 * after the gate drivers are reenabled.  */
+	reg [3:0] lockout_inhibit_dly = 4'b1111;
+	always @(posedge clk_50)
+		if (pllout ^ pllout_1a)
+			lockout_inhibit_dly <= {lockout_inhibit_dly[2:0], ~gate_enbl};
+	assign lockout_inhibit = |lockout_inhibit_dly;
 
 	/*** Display logic ***/
 	
@@ -428,7 +441,7 @@ module ufpgapll(
 		shift_bcd_3a <= shift_bcd_2a;
 	end
 	
-	assign led = {lockout && gate_enbl, 1'b0, slew_slow, slew_fast};
+	assign led = {lockout && ~lockout_inhibit, lockout_inhibit, slew_slow, slew_fast};
 	
 	wire [15:0] display =
 	  btns[0] ? shift_bcd_3a :
